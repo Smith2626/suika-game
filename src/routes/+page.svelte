@@ -276,11 +276,12 @@
 </main>
 
 <style>
-  main { display: flex; justify-content: center; align-items: center; width: 100vw; height: 100vh; padding: 1rem; }
-  .game-ui-layout { display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+  /* --- BASE STYLES (for Desktop First) --- */
+  main { display: flex; justify-content: center; align-items: center; width: 100vw; height: 100vh; padding: 1rem; box-sizing: border-box; }
+  .game-ui-layout { display: flex; flex-direction: column; align-items: center; gap: 1rem; width: 100%; }
   .game-header { display: flex; gap: 1rem; }
   .header-btn { background: #a0522d; color: white; border: 2px solid #633b1d; padding: 0.5rem 1rem; border-radius: 0.5rem; font-family: inherit; font-weight: 600; cursor: pointer; }
-  .game-area-grid { display: flex; align-items: flex-start; gap: 2rem; }
+  .game-area-grid { display: flex; align-items: flex-start; gap: 2rem; width: 100%; justify-content: center; }
   .ui-panel { display: flex; flex-direction: column; gap: 1.5rem; }
   .game-board-area { position: relative; }
   .ui-box { background-color: #a0522d; color: white; border-radius: 1rem; padding: 1rem; text-align: center; width: 200px; border: 4px solid #8B4513; }
@@ -300,4 +301,54 @@
   .ability-btn:disabled { background-color: #555; cursor: not-allowed; opacity: 0.6; }
   .danger-line { position: absolute; top: 100px; left: 32px; right: 32px; height: 3px; background: #ff3b30; box-shadow: 0 0 10px #ff3b30; z-index: 10; border-radius: 3px; opacity: 0; transition: opacity 0.3s; }
   .danger-line.visible { opacity: 0.8; }
+
+  /* --- NEW: RESPONSIVE STYLES (The Fix) --- */
+
+  /* For TABLETS (screens smaller than 900px) */
+  @media (max-width: 900px) {
+    .game-area-grid {
+      /* Stack the right panel below the game area */
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+    .ui-panel.right {
+      /* Arrange the right panel boxes horizontally */
+      flex-direction: row;
+      flex-wrap: wrap;
+      justify-content: center;
+      width: 100%;
+      max-width: 450px;
+    }
+    .ui-box {
+      width: 180px; /* Make boxes slightly smaller */
+    }
+  }
+
+  /* For PHONES (screens smaller than 640px) */
+  @media (max-width: 640px) {
+    main {
+      padding: 0.5rem; /* Reduce padding on small screens */
+    }
+    .game-area-grid {
+      /* Hide the left panel completely on phones to save space */
+      /* We only show the essential game board and the right panel */
+      grid-template-columns: 1fr;
+      flex-direction: column;
+    }
+    .ui-panel.left {
+      display: none;
+    }
+    .ui-panel.right {
+      gap: 0.5rem;
+    }
+    .ui-box {
+      /* Make the boxes flexible to fit the screen */
+      width: 48%;
+      padding: 0.5rem;
+    }
+    .box-content.score { font-size: 2rem; }
+    .box-content.high-score { font-size: 1.2rem; }
+    .next-fruit { height: 60px; }
+  }
 </style>
