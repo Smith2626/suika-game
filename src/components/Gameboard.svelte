@@ -5,13 +5,19 @@
     import { AudioManager } from '../lib/AudioManager.js';
 
     export function swapFruits() {
-        if (!isDroppingAllowed) return;
+        console.log('swapFruits called: isDroppingAllowed=', isDroppingAllowed);
+        if (!isDroppingAllowed) {
+            console.log('Swap blocked: isDroppingAllowed is false');
+            dispatch('swapBlocked');
+            return;
+        }
         AudioManager.play('click');
         [currentFruit, nextFruit] = [nextFruit, currentFruit];
         dispatch('nextfruitupdate', { fruit: nextFruit });
     }
 
     export function shakeWorld() {
+        console.log('shakeWorld called: fruitBodies size=', fruitBodies.size);
         AudioManager.play('click');
         fruitBodies.forEach(body => {
             Matter.Body.applyForce(body, body.position, {
@@ -21,7 +27,6 @@
         });
     }
     
-    // This function is for the multiplayer game over logic.
     export function stopGame() {
         if (runner) Matter.Runner.stop(runner);
         isDroppingAllowed = false;
@@ -75,7 +80,7 @@
         currentFruit = nextFruit;
         nextFruit = selectNewFruit();
         dispatch('nextfruitupdate', { fruit: nextFruit });
-        setTimeout(() => { isDroppingAllowed = true; }, 500);
+        setTimeout(() => { isDroppingAllowed = true; }, 300);
     }
 
     function handleMouseMove(event) {
@@ -88,8 +93,6 @@
     }
 
     function initializePhysics() {
-        // THIS IS THE FIX. We MUST use Matter.Render, Matter.Engine, etc.
-        // The old de-structuring `const { Render } = Matter` was the source of the crash.
         engine = Matter.Engine.create({ gravity: { y: 1 } });
         render = Matter.Render.create({ element: sceneElement, engine: engine, options: { width: GAME_WIDTH, height: GAME_HEIGHT, wireframes: false, background: 'transparent' } });
         const wallOptions = { isStatic: true, render: { visible: false } };
@@ -206,6 +209,7 @@
                 nextFruit = selectNewFruit();
                 dispatch('nextfruitupdate', { fruit: nextFruit });
                 initializePhysics();
+                console.log('Gameboard initialized: currentFruit=', currentFruit, 'nextFruit=', nextFruit);
             }
         }, 100);
     });
@@ -265,7 +269,6 @@
     .drop-line { position: absolute; left: 50%; top: 0; transform: translateX(-50%); border-left: 2px dashed rgba(0,0,0,0.3); }
     .drop-indicator img { border-radius: 50%; }
     .loading-overlay { position: absolute; inset: 0; background-color: rgba(0,0,0,0.7); z-index: 200; display: flex; justify-content: center; align-items: center; color: white; font-size: 1.5rem; font-weight: 600; border-radius: 20px; }
-
     @keyframes float-up {
         from { transform: translate(-50%, 0) scale(1); opacity: 1; }
         to { transform: translate(-50%, -50px) scale(0.8); opacity: 0; }
