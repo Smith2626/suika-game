@@ -4,6 +4,8 @@
     import { FRUITS, INITIAL_DROPPABLE_FRUIT_IDS } from '../data/fruits.js';
     import { AudioManager } from '../lib/AudioManager.js';
 
+    export let isMultiplayer = false;
+
     export function swapFruits() {
         console.log('swapFruits called: isDroppingAllowed=', isDroppingAllowed);
         if (!isDroppingAllowed) {
@@ -33,20 +35,24 @@
     }
 
     const dispatch = createEventDispatcher();
-    const GAME_WIDTH = 380;
-    const GAME_HEIGHT = 550;
+    let GAME_WIDTH = 380;
+    let GAME_HEIGHT = 550;
     const WALL_THICKNESS = 40;
     const DANGER_LINE_Y = 80;
     const DROP_INDICATOR_Y = 40;
     const COMBO_TIMEOUT = 2000;
+    const AFK_WARNING_TIMEOUT = 5000;
+    const AFK_ELIMINATION_TIMEOUT = 10000;
 
     let sceneElement;
     let engine, render, runner, gameOverTimeoutId = null;
     const fruitBodies = new Set(), imageCache = new Map();
-    let areImagesLoaded = false, mousePositionX = GAME_WIDTH / 2, isDroppingAllowed = true;
+    let areImagesLoaded = false, mousePositionX = 0, isDroppingAllowed = true;
     let currentFruit = null, nextFruit = null, scorePopups = [];
     let comboCount = 0;
     let comboTimeoutId = null;
+    let lastFruitDroppedTime = Date.now();
+    let afkWarningShown = false;
 
     function getFruit(fruitId) {
         return FRUITS.find(f => f.id === fruitId);
@@ -60,18 +66,64 @@
     function preloadImages() {
         let loadedCount = 0;
         const totalImages = FRUITS.length;
-        if (totalImages === 0) { areImagesLoaded = true; return; }
+        if (totalImages === 0) {
+            areImagesLoaded = true;
+            return;
+        }
         FRUITS.forEach(fruitDef => {
             const img = new Image();
-            img.onload = () => { loadedCount++; if (loadedCount === totalImages) areImagesLoaded = true; };
-            img.onerror = () => { console.error(`Failed to load image for ${fruitDef.name}`); loadedCount++; if (loadedCount === totalImages) areImagesLoaded = true; };
+            img.onload = () => {
+                loadedCount++;
+                if (loadedCount === totalImages) areImagesLoaded = true;
+            };
+            img.onerror = () => {
+                console.error(`Failed to load image for ${fruitDef.name}`);
+                loadedCount++;
+                if (loadedCount === totalImages) areImagesLoaded = true;
+            };
             img.src = fruitDef.imageSrc;
             imageCache.set(fruitDef.id, img);
         });
     }
 
-    function dropFruit() {
-        if (!isDroppingAllowed || !areImagesLoaded || !currentFruit) return;
+    function updateCanvasSize() {
+        if (!sceneElement) {
+            console.warn('updateCanvasSize: sceneElement not ready');
+            return;
+        }
+        const maxWidth = Math.min(window.innerWidth * 0.9, 400);
+        const maxHeight = window.innerHeight * 0.65;
+        const aspectRatio = 380 / 550;
+        let newWidth = maxWidth;
+        let newHeight = newWidth / aspectRatio;
+        if (newHeight > maxHeight) {
+            newHeight = maxHeight;
+            newWidth = newHeight * aspectRatio;
+        }
+        GAME_WIDTH = Math.max(200, newWidth);
+        GAME_HEIGHT = Math.max(275, newHeight);
+        mousePositionX = GAME_WIDTH / 2;
+        if (render && render.canvas) {
+            render.canvas.width = GAME_WIDTH;
+            render.canvas.height = GAME_HEIGHT;
+            render.options.width = GAME_WIDTH;
+            render.options.height = GAME_HEIGHT;
+            Matter.Render.setPixelRatio(render, window.devicePixelRatio);
+            console.log('Canvas resized:', { GAME_WIDTH, GAME_HEIGHT });
+        }
+    }
+
+    function dropFruit(e) {
+        if (!isDroppingAllowed || !areImagesLoaded || !currentFruit) {
+            console.warn('dropFruit blocked:', { isDroppingAllowed, areImagesLoaded, currentFruit });
+            return;
+        }
+        const minX = WALL_THICKNESS + currentFruit.radius;
+        const maxX = GAME_WIDTH - WALL_THICKNESS - currentFruit.radius;
+        if (mousePositionX < minX || mousePositionX > maxX) {
+            console.warn('Drop prevented: out of bounds at', mousePositionX);
+            return;
+        }
         AudioManager.play('drop');
         isDroppingAllowed = false;
         const fruitBody = Matter.Bodies.circle(mousePositionX, DROP_INDICATOR_Y + currentFruit.radius, currentFruit.radius, { restitution: 0.3, friction: 0.5, plugin: { fruitId: currentFruit.id }, render: { visible: false } });
@@ -80,6 +132,9 @@
         currentFruit = nextFruit;
         nextFruit = selectNewFruit();
         dispatch('nextfruitupdate', { fruit: nextFruit });
+        lastFruitDroppedTime = Date.now();
+        afkWarningShown = false;
+        console.log('Fruit dropped, AFK timer reset');
         setTimeout(() => { isDroppingAllowed = true; }, 300);
     }
 
@@ -87,14 +142,58 @@
         if (!currentFruit || !sceneElement) return;
         const rect = sceneElement.getBoundingClientRect();
         let x = event.clientX - rect.left;
-        const minX = WALL_THICKNESS / 2 + currentFruit.radius;
-        const maxX = GAME_WIDTH - WALL_THICKNESS / 2 - currentFruit.radius;
+        const minX = WALL_THICKNESS + currentFruit.radius;
+        const maxX = GAME_WIDTH - WALL_THICKNESS - currentFruit.radius;
         mousePositionX = Math.max(minX, Math.min(x, maxX));
     }
 
+    function handleTouchMove(event) {
+        if (!currentFruit || !sceneElement) return;
+        event.preventDefault();
+        const rect = sceneElement.getBoundingClientRect();
+        let x = event.touches[0].clientX - rect.left;
+        const minX = WALL_THICKNESS + currentFruit.radius;
+        const maxX = GAME_WIDTH - WALL_THICKNESS - currentFruit.radius;
+        mousePositionX = Math.max(minX, Math.min(x, maxX));
+    }
+
+    function handleTouchStart(event) {
+        if (!currentFruit || !sceneElement) return;
+        event.preventDefault();
+        dropFruit(event);
+    }
+
+    function checkAFK() {
+        if (!isMultiplayer) return;
+        const now = Date.now();
+        const idleTime = now - lastFruitDroppedTime;
+        if (idleTime > AFK_WARNING_TIMEOUT && !afkWarningShown) {
+            afkWarningShown = true;
+            console.log('AFK warning shown for player');
+        }
+        if (idleTime > AFK_ELIMINATION_TIMEOUT) {
+            console.log('Player eliminated due to AFK');
+            dispatch('gameover');
+            stopGame();
+        }
+    }
+
     function initializePhysics() {
+        if (!sceneElement) {
+            console.error('initializePhysics: sceneElement not found');
+            return;
+        }
         engine = Matter.Engine.create({ gravity: { y: 1 } });
-        render = Matter.Render.create({ element: sceneElement, engine: engine, options: { width: GAME_WIDTH, height: GAME_HEIGHT, wireframes: false, background: 'transparent' } });
+        render = Matter.Render.create({
+            element: sceneElement,
+            engine: engine,
+            options: {
+                width: GAME_WIDTH,
+                height: GAME_HEIGHT,
+                wireframes: false,
+                background: 'transparent'
+            }
+        });
         const wallOptions = { isStatic: true, render: { visible: false } };
         
         Matter.World.add(engine.world, [
@@ -136,6 +235,7 @@
                 clearTimeout(gameOverTimeoutId);
                 gameOverTimeoutId = null;
             }
+            checkAFK();
         });
 
         Matter.Events.on(render, 'afterRender', (event) => {
@@ -197,11 +297,15 @@
                 }
             }
         });
+        console.log('Physics initialized, starting render');
         Matter.Render.run(render);
     }
     
     onMount(() => {
+        console.log('Gameboard onMount: Initializing');
         preloadImages();
+        updateCanvasSize();
+        window.addEventListener('resize', updateCanvasSize);
         const checkImages = setInterval(() => {
             if (areImagesLoaded) {
                 clearInterval(checkImages);
@@ -212,75 +316,144 @@
                 console.log('Gameboard initialized: currentFruit=', currentFruit, 'nextFruit=', nextFruit);
             }
         }, 100);
+        return () => {
+            clearInterval(checkImages);
+            window.removeEventListener('resize', updateCanvasSize);
+        };
     });
 
     onDestroy(() => {
+        console.log('Gameboard onDestroy: Cleaning up');
         clearTimeout(comboTimeoutId);
         if (gameOverTimeoutId) clearTimeout(gameOverTimeoutId);
         if (render) Matter.Render.stop(render);
         if (runner) Matter.Runner.stop(runner);
         if (engine) Matter.Engine.clear(engine);
+        console.log('Gameboard cleaned up');
     });
 </script>
 
 <div class="gameboard-wrapper">
     {#if !areImagesLoaded}
-        <div class="loading-overlay"><div class="loading-text">Loading Fruits...</div></div>
+        <div class="loading-overlay">
+            <div class="loading-text">Loading Fruits...</div>
+        </div>
     {/if}
     <div 
-      bind:this={sceneElement} 
-      class="physics-scene-container"
-      class:ready={areImagesLoaded}
-      on:mousemove={handleMouseMove}
-      on:click={dropFruit}
+        bind:this={sceneElement} 
+        class="physics-scene-container"
+        class:ready={areImagesLoaded}
+        on:mousemove={handleMouseMove}
+        on:touchmove|preventDefault={handleTouchMove}
+        on:click={dropFruit}
+        on:touchstart|preventDefault={handleTouchStart}
     >
         {#if isDroppingAllowed && areImagesLoaded && currentFruit}
             <div class="drop-indicator" style="left: {mousePositionX}px; top: {DROP_INDICATOR_Y}px;">
                 <div class="drop-line" style="height: {GAME_HEIGHT - DROP_INDICATOR_Y}px;"></div>
-                <img src={currentFruit.imageSrc} alt={currentFruit.name} style="width: {currentFruit.radius * 2}px;"/>
+                <img src={currentFruit.imageSrc} alt={currentFruit.name} style="width: {currentFruit.radius * 2}px;" />
             </div>
         {/if}
-        
         {#each scorePopups as popup (popup.id)}
-            <div class="score-popup" style="left: {popup.x}px; top: {popup.y}px;">
+            <div class="score-popup" style="left: {popup.x}px; top: {popup.y}px; font-size: {Math.min(GAME_WIDTH * 0.03, 2)}rem;">
                 +{popup.value}
             </div>
         {/each}
+        {#if isMultiplayer && afkWarningShown}
+            <div class="afk-warning">Don’t go AFK!</div>
+        {/if}
     </div>
 </div>
 
 <style>
-    .gameboard-wrapper { perspective: 1000px; position: relative; }
+    .gameboard-wrapper { 
+        position: relative; 
+        width: 100%;
+        max-width: 400px;
+        margin: 0 auto;
+    }
     .physics-scene-container {
-        transform: rotateX(2deg); 
+        position: relative;
         background-color: #debe9c;
         border: 12px solid #8B4513;
         border-top: 20px solid #a0522d;
         border-bottom: 20px solid #a0522d;
         border-radius: 20px;
-        box-shadow: 0px 15px 30px rgba(0, 0, 0, 0.4), inset 0px 0px 15px rgba(0, 0,0, 0.3);
+        box-shadow: 0px 15px 30px rgba(0, 0, 0, 0.4), inset 0px 0px 15px rgba(0, 0, 0, 0.3);
         background-image: url('https://www.transparenttextures.com/patterns/wood-pattern.png');
-        position: relative;
-        overflow: hidden;
+        overflow: visible;
         cursor: not-allowed;
+        aspect-ratio: 380 / 550;
     }
     .physics-scene-container.ready { cursor: pointer; }
-    .drop-indicator { position: absolute; transform: translateX(-50%); pointer-events: none; z-index: 100; opacity: 0.8; }
-    .drop-line { position: absolute; left: 50%; top: 0; transform: translateX(-50%); border-left: 2px dashed rgba(0,0,0,0.3); }
+    .drop-indicator { 
+        position: absolute; 
+        transform: translateX(-50%); 
+        pointer-events: none; 
+        z-index: 100; 
+        opacity: 0.8; 
+    }
+    .drop-line { 
+        position: absolute; 
+        left: 50%; 
+        top: 0; 
+        transform: translateX(-50%); 
+        border-left: 2px dashed rgba(0,0,0,0.3); 
+    }
     .drop-indicator img { border-radius: 50%; }
-    .loading-overlay { position: absolute; inset: 0; background-color: rgba(0,0,0,0.7); z-index: 200; display: flex; justify-content: center; align-items: center; color: white; font-size: 1.5rem; font-weight: 600; border-radius: 20px; }
+    .loading-overlay { 
+        position: absolute; 
+        inset: 0; 
+        background-color: rgba(0,0,0,0.7); 
+        z-index: 200; 
+        display: flex; 
+        justify-content: center; 
+        align-items: center; 
+        color: white; 
+        font-size: 1.2rem; 
+        font-weight: 600; 
+        border-radius: 20px;
+    }
     @keyframes float-up {
         from { transform: translate(-50%, 0) scale(1); opacity: 1; }
-        to { transform: translate(-50%, -50px) scale(0.8); opacity: 0; }
+        to { transform: translate(-50%, -50px) scale(0.7); opacity: 0; }
     }
     .score-popup {
         position: absolute;
         color: black;
-        font-size: 1.8rem;
         font-weight: 700;
         text-shadow: 1px 1px 2px rgba(255,255,255,0.7);
         pointer-events: none;
         z-index: 100;
+        max-width: 100px;
+        max-height: 50px;
+        overflow: hidden;
         animation: float-up 1.5s ease-out forwards;
+    }
+    .afk-warning {
+        position: absolute;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(255, 165, 0, 0.8);
+        color: white;
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        max-width: 200px;
+        text-align: center;
+        z-index: 100;
+    }
+    @media (max-width: 400px) {
+        .gameboard-wrapper { max-width: 90vw; }
+        .physics-scene-container { 
+            border: 8px solid #8B4513; 
+            border-top: 15px solid #a0522d; 
+            border-bottom: 15px solid #a0522d; 
+            border-radius: 15px; 
+        }
+        .loading-overlay { font-size: 1rem; }
+        .afk-warning { font-size: 0.8rem; padding: 0.3rem 0.8rem; max-width: 180px; }
     }
 </style>
