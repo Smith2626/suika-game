@@ -7,9 +7,7 @@
     export let isMultiplayer = false;
 
     export function swapFruits() {
-        console.log('swapFruits called: isDroppingAllowed=', isDroppingAllowed);
         if (!isDroppingAllowed) {
-            console.log('Swap blocked: isDroppingAllowed is false');
             dispatch('swapBlocked');
             return;
         }
@@ -19,7 +17,6 @@
     }
 
     export function shakeWorld() {
-        console.log('shakeWorld called: fruitBodies size=', fruitBodies.size);
         AudioManager.play('click');
         fruitBodies.forEach(body => {
             Matter.Body.applyForce(body, body.position, {
@@ -37,7 +34,7 @@
     const dispatch = createEventDispatcher();
     let GAME_WIDTH = 380;
     let GAME_HEIGHT = 550;
-    const WALL_THICKNESS = 40;
+    const wallThickness = 20;
     const DANGER_LINE_Y = 80;
     const DROP_INDICATOR_Y = 40;
     const COMBO_TIMEOUT = 2000;
@@ -87,10 +84,7 @@
     }
 
     function updateCanvasSize() {
-        if (!sceneElement) {
-            console.warn('updateCanvasSize: sceneElement not ready');
-            return;
-        }
+        if (!sceneElement) { return; }
         const maxWidth = Math.min(window.innerWidth * 0.9, 400);
         const maxHeight = window.innerHeight * 0.65;
         const aspectRatio = 380 / 550;
@@ -109,21 +103,15 @@
             render.options.width = GAME_WIDTH;
             render.options.height = GAME_HEIGHT;
             Matter.Render.setPixelRatio(render, window.devicePixelRatio);
-            console.log('Canvas resized:', { GAME_WIDTH, GAME_HEIGHT });
         }
     }
 
-    function dropFruit(e) {
-        if (!isDroppingAllowed || !areImagesLoaded || !currentFruit) {
-            console.warn('dropFruit blocked:', { isDroppingAllowed, areImagesLoaded, currentFruit });
-            return;
-        }
-        const minX = WALL_THICKNESS + currentFruit.radius;
-        const maxX = GAME_WIDTH - WALL_THICKNESS - currentFruit.radius;
-        if (mousePositionX < minX || mousePositionX > maxX) {
-            console.warn('Drop prevented: out of bounds at', mousePositionX);
-            return;
-        }
+    function dropFruit() {
+        if (!isDroppingAllowed || !areImagesLoaded || !currentFruit) { return; }
+        const minX = wallThickness + currentFruit.radius;
+        const maxX = GAME_WIDTH - wallThickness - currentFruit.radius;
+        if (mousePositionX < minX || mousePositionX > maxX) { return; }
+        
         AudioManager.play('drop');
         isDroppingAllowed = false;
         const fruitBody = Matter.Bodies.circle(mousePositionX, DROP_INDICATOR_Y + currentFruit.radius, currentFruit.radius, { restitution: 0.3, friction: 0.5, plugin: { fruitId: currentFruit.id }, render: { visible: false } });
@@ -134,7 +122,6 @@
         dispatch('nextfruitupdate', { fruit: nextFruit });
         lastFruitDroppedTime = Date.now();
         afkWarningShown = false;
-        console.log('Fruit dropped, AFK timer reset');
         setTimeout(() => { isDroppingAllowed = true; }, 300);
     }
 
@@ -142,8 +129,8 @@
         if (!currentFruit || !sceneElement) return;
         const rect = sceneElement.getBoundingClientRect();
         let x = event.clientX - rect.left;
-        const minX = WALL_THICKNESS + currentFruit.radius;
-        const maxX = GAME_WIDTH - WALL_THICKNESS - currentFruit.radius;
+        const minX = wallThickness + currentFruit.radius;
+        const maxX = GAME_WIDTH - wallThickness - currentFruit.radius;
         mousePositionX = Math.max(minX, Math.min(x, maxX));
     }
 
@@ -152,15 +139,9 @@
         event.preventDefault();
         const rect = sceneElement.getBoundingClientRect();
         let x = event.touches[0].clientX - rect.left;
-        const minX = WALL_THICKNESS + currentFruit.radius;
-        const maxX = GAME_WIDTH - WALL_THICKNESS - currentFruit.radius;
+        const minX = wallThickness + currentFruit.radius;
+        const maxX = GAME_WIDTH - wallThickness - currentFruit.radius;
         mousePositionX = Math.max(minX, Math.min(x, maxX));
-    }
-
-    function handleTouchStart(event) {
-        if (!currentFruit || !sceneElement) return;
-        event.preventDefault();
-        dropFruit(event);
     }
 
     function checkAFK() {
@@ -169,37 +150,27 @@
         const idleTime = now - lastFruitDroppedTime;
         if (idleTime > AFK_WARNING_TIMEOUT && !afkWarningShown) {
             afkWarningShown = true;
-            console.log('AFK warning shown for player');
         }
         if (idleTime > AFK_ELIMINATION_TIMEOUT) {
-            console.log('Player eliminated due to AFK');
             dispatch('gameover');
             stopGame();
         }
     }
 
     function initializePhysics() {
-        if (!sceneElement) {
-            console.error('initializePhysics: sceneElement not found');
-            return;
-        }
+        if (!sceneElement) { return; }
         engine = Matter.Engine.create({ gravity: { y: 1 } });
         render = Matter.Render.create({
             element: sceneElement,
             engine: engine,
-            options: {
-                width: GAME_WIDTH,
-                height: GAME_HEIGHT,
-                wireframes: false,
-                background: 'transparent'
-            }
+            options: { width: GAME_WIDTH, height: GAME_HEIGHT, wireframes: false, background: 'transparent' }
         });
-        const wallOptions = { isStatic: true, render: { visible: false } };
         
+        const wallOptions = { isStatic: true, render: { visible: false } };
         Matter.World.add(engine.world, [
-            Matter.Bodies.rectangle(GAME_WIDTH / 2, GAME_HEIGHT, GAME_WIDTH, WALL_THICKNESS, wallOptions),
-            Matter.Bodies.rectangle(0, GAME_HEIGHT / 2, WALL_THICKNESS, GAME_HEIGHT, wallOptions),
-            Matter.Bodies.rectangle(GAME_WIDTH, GAME_HEIGHT / 2, WALL_THICKNESS, GAME_HEIGHT, wallOptions),
+            Matter.Bodies.rectangle(GAME_WIDTH / 2, GAME_HEIGHT - (wallThickness / 2), GAME_WIDTH, wallThickness, wallOptions),
+            Matter.Bodies.rectangle(wallThickness / 2, GAME_HEIGHT / 2, wallThickness, GAME_HEIGHT, wallOptions),
+            Matter.Bodies.rectangle(GAME_WIDTH - (wallThickness / 2), GAME_HEIGHT / 2, wallThickness, GAME_HEIGHT, wallOptions),
             Matter.Bodies.rectangle(GAME_WIDTH / 2, DANGER_LINE_Y, GAME_WIDTH, 2, { isStatic: true, isSensor: true, label: 'danger-line', render: { visible: false } })
         ]);
 
@@ -297,12 +268,10 @@
                 }
             }
         });
-        console.log('Physics initialized, starting render');
         Matter.Render.run(render);
     }
     
     onMount(() => {
-        console.log('Gameboard onMount: Initializing');
         preloadImages();
         updateCanvasSize();
         window.addEventListener('resize', updateCanvasSize);
@@ -313,7 +282,6 @@
                 nextFruit = selectNewFruit();
                 dispatch('nextfruitupdate', { fruit: nextFruit });
                 initializePhysics();
-                console.log('Gameboard initialized: currentFruit=', currentFruit, 'nextFruit=', nextFruit);
             }
         }, 100);
         return () => {
@@ -323,13 +291,11 @@
     });
 
     onDestroy(() => {
-        console.log('Gameboard onDestroy: Cleaning up');
         clearTimeout(comboTimeoutId);
         if (gameOverTimeoutId) clearTimeout(gameOverTimeoutId);
         if (render) Matter.Render.stop(render);
         if (runner) Matter.Runner.stop(runner);
         if (engine) Matter.Engine.clear(engine);
-        console.log('Gameboard cleaned up');
     });
 </script>
 
@@ -344,9 +310,10 @@
         class="physics-scene-container"
         class:ready={areImagesLoaded}
         on:mousemove={handleMouseMove}
-        on:touchmove|preventDefault={handleTouchMove}
         on:click={dropFruit}
-        on:touchstart|preventDefault={handleTouchStart}
+        on:touchmove|preventDefault={handleTouchMove}
+        on:touchstart|preventDefault={handleTouchMove}
+        on:touchend|preventDefault={dropFruit}
     >
         {#if isDroppingAllowed && areImagesLoaded && currentFruit}
             <div class="drop-indicator" style="left: {mousePositionX}px; top: {DROP_INDICATOR_Y}px;">
